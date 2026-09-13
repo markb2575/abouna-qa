@@ -1,0 +1,116 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "native" covers local dev machines; "debian-openssl-3.0.x" matches Azure
+  // App Service's Linux (Oryx/Debian) runtime that CI builds and deploys to.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AgeRange {
+  UNDER_18
+  AGE_18_25
+  AGE_26_40
+  AGE_41_60
+  AGE_60_PLUS
+}
+
+enum QuestionStatus {
+  PENDING
+  ANSWERED
+}
+
+model Priest {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  isAdmin   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  invitesSent      PriestInvite[]  @relation("InvitedBy")
+  answeredQuestions Question[]     @relation("AnsweredBy")
+  magicLinkTokens  MagicLinkToken[]
+  sessions         PriestSession[]
+}
+
+model PriestInvite {
+  id           String    @id @default(cuid())
+  email        String
+  tokenHash    String    @unique
+  invitedById  String?
+  invitedBy    Priest?   @relation("InvitedBy", fields: [invitedById], references: [id])
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  usedAt       DateTime?
+
+  @@index([email])
+}
+
+model MagicLinkToken {
+  id        String    @id @default(cuid())
+  priestId  String
+  priest    Priest    @relation(fields: [priestId], references: [id])
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  @@index([priestId])
+}
+
+model PriestSession {
+  id         String    @id @default(cuid())
+  priestId   String
+  priest     Priest    @relation(fields: [priestId], references: [id])
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([priestId])
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  slug      String     @unique
+  createdAt DateTime   @default(now())
+  questions Question[]
+}
+
+model Question {
+  id                   String         @id @default(cuid())
+  questionText         String
+  originalQuestionText String
+  askerEmail           String
+  ageRange             AgeRange
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  // Reserved for a future AI-suggested-category feature; unused in v1.
+  aiSuggestedCategoryLabel String?
+
+  isPublic Boolean        @default(false)
+  status   QuestionStatus @default(PENDING)
+
+  answerText         String?
+  answeredByPriestId String?
+  answeredByPriest   Priest?   @relation("AnsweredBy", fields: [answeredByPriestId], references: [id])
+  answeredAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Generated column (English tsvector over questionText + answerText), added by
+  // a hand-written raw-SQL migration since Prisma can't manage GENERATED columns.
+  // Not readable/writable via Prisma Client; query it with $queryRaw in search.
+  searchVector Unsupported("tsvector")?
+
+  @@index([status, isPublic])
+  @@index([categoryId])
+}
