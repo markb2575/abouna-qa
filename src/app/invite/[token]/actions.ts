@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { acceptInviteSchema } from "@/lib/validation";
 import { hashToken } from "@/lib/tokens";
+import { isValidChurch } from "@/lib/churches";
 import { createPriestSession } from "@/lib/session";
 
 export type AcceptInviteState = {
@@ -17,10 +18,17 @@ export async function acceptInvite(
   const parsed = acceptInviteSchema.safeParse({
     token: formData.get("token"),
     name: formData.get("name"),
+    country: formData.get("country"),
+    state: formData.get("state"),
+    church: formData.get("church"),
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Please enter your name." };
+    return { error: parsed.error.issues[0]?.message ?? "Please fill out the form." };
+  }
+
+  if (!isValidChurch(parsed.data.country, parsed.data.state, parsed.data.church)) {
+    return { error: "Please select your church from the list." };
   }
 
   const tokenHash = hashToken(parsed.data.token);
@@ -45,7 +53,13 @@ export async function acceptInvite(
   }
 
   const priest = await prisma.priest.create({
-    data: { email: invite.email, name: parsed.data.name },
+    data: {
+      email: invite.email,
+      name: parsed.data.name,
+      country: parsed.data.country,
+      state: parsed.data.state,
+      church: parsed.data.church,
+    },
   });
 
   await createPriestSession(priest.id);

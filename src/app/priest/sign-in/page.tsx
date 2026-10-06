@@ -1,4 +1,4 @@
-import { requestMagicLink } from "./actions";
+import { SignInForm } from "./SignInForm";
 
 export const metadata = { title: "Priest Sign In — Abouna Q&A" };
 
@@ -17,21 +17,7 @@ export default async function PriestSignInPage({ searchParams }: PageProps<"/pri
           That link is invalid, expired, or already used. Request a new one below.
         </p>
       )}
-      <form action={requestMagicLink} className="flex flex-col gap-4">
-        <input
-          type="email"
-          name="email"
-          required
-          placeholder="you@example.com"
-          className="rounded-md border border-black/20 dark:border-white/20 bg-transparent p-2 text-sm"
-        />
-        <button
-          type="submit"
-          className="rounded-md bg-foreground text-background px-4 py-2 text-sm font-medium"
-        >
-          Send Sign-In Link
-        </button>
-      </form>
+      <SignInForm />
     </div>
   );
 }

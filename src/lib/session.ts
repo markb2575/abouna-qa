@@ -60,6 +60,9 @@ export type CurrentPriest = {
   email: string;
   name: string;
   isAdmin: boolean;
+  country: string;
+  state: string;
+  church: string;
 };
 
 /** Returns the signed-in priest, or null. Also enforces DB-side revocation/expiry and bumps sliding expiration. */
@@ -73,7 +76,18 @@ export async function getCurrentPriest(): Promise<CurrentPriest | null> {
   });
 
   if (!dbSession || dbSession.revokedAt || isExpired(dbSession.expiresAt)) {
-    session.destroy();
+    // getCurrentPriest() is called from Server Components (e.g. layout.tsx on
+    // every page render) as well as Server Actions/Route Handlers, but Next
+    // only allows writing cookies from the latter two. Clearing a stale/invalid
+    // cookie is a nice-to-have, not required for correctness (we already
+    // return null either way, so auth is enforced regardless) — swallow the
+    // "Cookies can only be modified in a Server Action or Route Handler" throw
+    // rather than crashing page renders.
+    try {
+      session.destroy();
+    } catch {
+      // no-op: not in a context that can write cookies right now
+    }
     return null;
   }
 
@@ -89,6 +103,9 @@ export async function getCurrentPriest(): Promise<CurrentPriest | null> {
     email: dbSession.priest.email,
     name: dbSession.priest.name,
     isAdmin: dbSession.priest.isAdmin,
+    country: dbSession.priest.country,
+    state: dbSession.priest.state,
+    church: dbSession.priest.church,
   };
 }
 

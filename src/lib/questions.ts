@@ -9,30 +9,33 @@ export type PublicQuestionListItem = {
   questionText: string;
   answerText: string | null;
   answeredAt: Date | null;
-  categoryId: string | null;
-  categoryName: string | null;
+  categories: { id: string; name: string }[];
 };
 
 export async function searchPublicQuestions(params: {
   q?: string;
-  categoryId?: string;
+  categoryIds?: string[];
   page?: number;
 }): Promise<{ items: PublicQuestionListItem[]; hasNextPage: boolean; page: number }> {
   const page = Math.max(1, params.page ?? 1);
   const offset = (page - 1) * PAGE_SIZE;
   const q = params.q?.trim();
+  const categoryIds = params.categoryIds?.filter(Boolean) ?? [];
 
-  let items: PublicQuestionListItem[];
+  let ids: string[];
 
   if (q) {
-    const categoryFilter = params.categoryId
-      ? Prisma.sql`AND q."categoryId" = ${params.categoryId}`
-      : Prisma.empty;
+    const categoryFilter =
+      categoryIds.length > 0
+        ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM "QuestionCategory" qc
+            WHERE qc."questionId" = q.id AND qc."categoryId" IN (${Prisma.join(categoryIds)})
+          )`
+        : Prisma.empty;
 
-    items = await prisma.$queryRaw<PublicQuestionListItem[]>`
-      SELECT q.id, q."questionText", q."answerText", q."answeredAt", q."categoryId", c.name AS "categoryName"
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT q.id
       FROM "Question" q
-      LEFT JOIN "Category" c ON c.id = q."categoryId"
       WHERE q."isPublic" = true
         AND q.status = 'ANSWERED'
         AND q."searchVector" @@ websearch_to_tsquery('english', ${q})
@@ -40,36 +43,60 @@ export async function searchPublicQuestions(params: {
       ORDER BY ts_rank(q."searchVector", websearch_to_tsquery('english', ${q})) DESC, q."answeredAt" DESC
       LIMIT ${PAGE_SIZE + 1} OFFSET ${offset}
     `;
+    ids = rows.map((r) => r.id);
   } else {
     const rows = await prisma.question.findMany({
       where: {
         isPublic: true,
         status: "ANSWERED",
-        ...(params.categoryId ? { categoryId: params.categoryId } : {}),
+        ...(categoryIds.length > 0
+          ? { questionCategories: { some: { categoryId: { in: categoryIds } } } }
+          : {}),
       },
-      include: { category: true },
+      select: { id: true },
       orderBy: { answeredAt: "desc" },
       skip: offset,
       take: PAGE_SIZE + 1,
     });
-    items = rows.map((r) => ({
-      id: r.id,
-      questionText: r.questionText,
-      answerText: r.answerText,
-      answeredAt: r.answeredAt,
-      categoryId: r.categoryId,
-      categoryName: r.category?.name ?? null,
-    }));
+    ids = rows.map((r) => r.id);
   }
 
-  const hasNextPage = items.length > PAGE_SIZE;
-  return { items: items.slice(0, PAGE_SIZE), hasNextPage, page };
+  const hasNextPage = ids.length > PAGE_SIZE;
+  const pageIds = ids.slice(0, PAGE_SIZE);
+
+  if (pageIds.length === 0) {
+    return { items: [], hasNextPage: false, page };
+  }
+
+  // Fetch full rows (order not guaranteed by IN, so re-sort to match `pageIds`).
+  const questions = await prisma.question.findMany({
+    where: { id: { in: pageIds } },
+    include: { questionCategories: { include: { category: true } } },
+  });
+  const byId = new Map(questions.map((q) => [q.id, q]));
+
+  const items: PublicQuestionListItem[] = pageIds
+    .map((id) => byId.get(id))
+    .filter((q): q is NonNullable<typeof q> => !!q)
+    .map((q) => ({
+      id: q.id,
+      questionText: q.questionText,
+      answerText: q.answerText,
+      answeredAt: q.answeredAt,
+      categories: q.questionCategories.map((qc) => ({ id: qc.category.id, name: qc.category.name })),
+    }));
+
+  return { items, hasNextPage, page };
 }
 
 export async function getPublicQuestion(id: string) {
   const question = await prisma.question.findFirst({
     where: { id, isPublic: true, status: "ANSWERED" },
-    include: { category: true },
+    include: { questionCategories: { include: { category: true } } },
   });
-  return question;
+  if (!question) return null;
+  return {
+    ...question,
+    categories: question.questionCategories.map((qc) => qc.category),
+  };
 }

@@ -3,6 +3,14 @@ import { EmailClient } from "@azure/communication-email";
 
 let cachedClient: EmailClient | null = null;
 
+// True until a real Azure Communication Services resource is configured (see
+// .env.example) — lets local dev exercise the invite/magic-link/notification
+// flows without one, by printing the email to the console instead of sending it.
+function isAcsConfigured(): boolean {
+  const connectionString = process.env.ACS_CONNECTION_STRING;
+  return !!connectionString && !connectionString.includes("REPLACE");
+}
+
 function getEmailClient(): EmailClient {
   if (!cachedClient) {
     const connectionString = process.env.ACS_CONNECTION_STRING;
@@ -27,13 +35,24 @@ function baseUrl(): string {
 }
 
 async function sendEmail(to: string, subject: string, html: string, plainText: string) {
+  const configured = isAcsConfigured();
+
+  // Always log — useful for debugging locally even once real sending works,
+  // not just as a fallback when ACS isn't configured yet.
+  console.log(
+    `\n===== ${configured ? "EMAIL (sending via ACS)" : "DEV EMAIL (ACS not configured — set ACS_CONNECTION_STRING to send for real)"} =====\nTo: ${to}\nSubject: ${subject}\n\n${plainText}\n==========================================================================================\n`
+  );
+
+  if (!configured) return;
+
   const client = getEmailClient();
   const poller = await client.beginSend({
     senderAddress: fromAddress(),
     content: { subject, html, plainText },
     recipients: { to: [{ address: to }] },
   });
-  await poller.pollUntilDone();
+  const result = await poller.pollUntilDone();
+  console.log(`===== EMAIL result: ${result.status} (id: ${result.id}) =====\n`);
 }
 
 export async function sendPriestInviteEmail(params: {
@@ -85,6 +104,20 @@ export async function sendQuestionAnsweredEmail(params: {
     ${publicLink ? `<p><a href="${publicLink}">View it on the site</a></p>` : ""}
   `;
   await sendEmail(params.to, "Your question has been answered", html, plainText);
+}
+
+export async function sendNewQuestionFromYourChurchEmail(params: {
+  to: string;
+  questionText: string;
+  church: string;
+}): Promise<void> {
+  const plainText = `A new question was submitted from your church (${params.church}):\n\n${params.questionText}\n\nSign in to answer it: ${baseUrl()}/priest/dashboard`;
+  const html = `
+    <p>A new question was submitted from your church (<strong>${escapeHtml(params.church)}</strong>):</p>
+    <p>${escapeHtml(params.questionText)}</p>
+    <p><a href="${baseUrl()}/priest/dashboard">Sign in to answer it</a></p>
+  `;
+  await sendEmail(params.to, "A new question from your church", html, plainText);
 }
 
 function escapeHtml(text: string): string {

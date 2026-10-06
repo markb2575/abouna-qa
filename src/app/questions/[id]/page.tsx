@@ -8,13 +8,20 @@ export default async function PublicQuestionPage({ params }: PageProps<"/questio
 
   return (
     <article className="flex flex-col gap-6">
-      {question.category && (
-        <span className="w-fit rounded-full bg-black/5 dark:bg-white/10 px-3 py-1 text-xs">
-          {question.category.name}
-        </span>
+      {question.categories.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {question.categories.map((c) => (
+            <span
+              key={c.id}
+              className="w-fit rounded-full bg-accent/10 px-3 py-1 text-xs text-accent"
+            >
+              {c.name}
+            </span>
+          ))}
+        </div>
       )}
       <h1 className="text-xl font-semibold">{question.questionText}</h1>
-      <div className="rounded-md border border-black/10 dark:border-white/10 p-4 whitespace-pre-wrap text-sm">
+      <div className="rounded-lg border border-border bg-card p-4 whitespace-pre-wrap text-sm shadow-sm">
         {question.answerText}
       </div>
     </article>

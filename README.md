@@ -50,26 +50,93 @@ seed-only `ADMIN_SEED_EMAIL` / `ADMIN_SEED_NAME`.
 
 One-time provisioning for a real environment, using the tiers picked for "designing for growth
 without overpaying before there's real traffic" — Basic/Burstable to start, each resizable later
-via a tier change, not a rebuild. Requires the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-(`az login` first) and, for the GitHub Actions steps, the [GitHub CLI](https://cli.github.com/) or
-repo admin access to set secrets manually.
+via a tier change, not a rebuild. Two equivalent paths are below: a
+[Portal](https://portal.azure.com) walkthrough (no tooling required beyond a browser — use this if
+the CLI is giving you trouble) and an [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
+(`az login` first) script version. Either way, the GitHub Actions steps end with setting secrets via
+repo admin access (Settings → Secrets and variables → Actions) or the [GitHub CLI](https://cli.github.com/).
 
 Pick names/values for the placeholders once and reuse them throughout:
 
 ```bash
-RESOURCE_GROUP="abouna-qa-rg"
-LOCATION="eastus"
-DB_SERVER_NAME="abouna-qa-db"           # must be globally unique
-DB_ADMIN_USER="aboudadmin"
-DB_NAME="abouna_qa"
-WEBAPP_NAME="abouna-qa"                 # must match AZURE_WEBAPP_NAME in .github/workflows/deploy.yml
-APP_SERVICE_PLAN="abouna-qa-plan"
-ACS_NAME="abouna-qa-acs"
-EMAIL_SERVICE_NAME="abouna-qa-email"
-KEYVAULT_NAME="abouna-qa-kv"            # must be globally unique
-APPINSIGHTS_NAME="abouna-qa-insights"
-GITHUB_REPO="your-org/abouna-qa"        # owner/repo, for the OIDC federated credential
+$RESOURCE_GROUP="FIRST"
+$LOCATION="eastus"
+$DB_SERVER_NAME="abouna-qa-db"
+$DB_ADMIN_USER="abounadbadmin"
+$DB_NAME="abouna_qa"
+$WEBAPP_NAME="abouna-qa"
+$APP_SERVICE_PLAN="abouna-qa-plan"
+$ACS_NAME="abouna-qa-acs"
+$EMAIL_SERVICE_NAME="abouna-qa-email"
+$KEYVAULT_NAME="abouna-qa-kv"
+$APPINSIGHTS_NAME="abouna-qa-insights"
+$GITHUB_REPO="markb2575/abouna-qa"
 ```
+
+### Portal walkthrough (if the CLI isn't available)
+
+The same eight resources, created by hand in the [Azure Portal](https://portal.azure.com) instead
+of via `az`. Each step names the values from the placeholder block above so you can switch back to
+the CLI steps later without anything drifting out of sync.
+
+1. **Resource group** — "Resource groups" → Create; name it `RESOURCE_GROUP`, region `LOCATION`.
+2. **Database** — "Azure Database for PostgreSQL flexible servers" → Create; on the "Basics" tab set
+   the server name to `DB_SERVER_NAME`, admin username to `DB_ADMIN_USER`, and pick a password; on
+   "Compute + storage" choose **Burstable**, **Standard_B2s**, 32 GiB storage with auto-growth on;
+   on "Networking" choose **Public access**, and check "Allow public access from any Azure service
+   within Azure to this server". After it deploys: open the "Databases" blade and add a database
+   named `DB_NAME`; open "Connection strings" to read the host/user pieces you need to hand-build
+   `DATABASE_URL` (append `?sslmode=require`).
+3. **App hosting** — "App Services" → Create; Publish: Code, Runtime stack: **Node 22 LTS**,
+   Operating System: **Linux**; under "App Service Plan" create a new one named `APP_SERVICE_PLAN`
+   on the **B2** SKU; name the app `WEBAPP_NAME` (this must match `AZURE_WEBAPP_NAME` in
+   `.github/workflows/deploy.yml`, currently `"abouna-qa"`). After it deploys: open the app's
+   **Identity** blade → Status **On** under "System assigned" → Save.
+4. **Email** — "Communication Services" → Create, named `ACS_NAME`; separately, "Email Communication
+   Services" → Create, named `EMAIL_SERVICE_NAME`; on that resource open **Provision domains** → Add
+   domain → **Azure managed domain** (free, no DNS records to add). Once it's provisioned, go back to
+   the Communication Services resource (`ACS_NAME`) → **Domains** blade → connect the managed domain
+   you just created. Then: the Communication Services resource's **Keys** blade has the connection
+   string for `ACS_CONNECTION_STRING`; the domain's overview page shows the exact sender address
+   (`DoNotReply@<guid>.azurecomm.net`) for `EMAIL_FROM_ADDRESS`.
+5. **Secrets — Key Vault** — "Key vaults" → Create, named `KEYVAULT_NAME`; on the "Access
+   configuration" tab pick **Azure role-based access control** (not "Vault access policy" — the next
+   sub-step needs RBAC mode). After it deploys: **Secrets** blade → Generate/Import, three times, for
+   `DATABASE-URL`, `ACS-CONNECTION-STRING`, and `SESSION-SECRET` (for the session secret, paste in
+   32+ random bytes from any password generator). Then: **Access control (IAM)** blade → Add role
+   assignment → role **Key Vault Secrets User** → Members → assign access to **Managed identity** →
+   pick the `WEBAPP_NAME` App Service's identity. Finally, on the App Service itself, open
+   **Environment variables** (or **Configuration** → Application settings) and add three settings of
+   type **Key vault reference** — `DATABASE_URL`, `ACS_CONNECTION_STRING`, `SESSION_SECRET` — using
+   the picker to select the vault and secret name rather than typing a URI by hand, plus three plain
+   settings: `EMAIL_FROM_ADDRESS`, `PUBLIC_BASE_URL` (`https://<WEBAPP_NAME>.azurewebsites.net`), and
+   `NODE_ENV=production`.
+6. **Monitoring** — "Application Insights" → Create, named `APPINSIGHTS_NAME`, resource mode
+   **workspace-based** (create a new Log Analytics workspace if you don't have one). Easiest path:
+   from the App Service itself, open its **Application Insights** blade and let it create/link one
+   in a single step; otherwise copy the **Connection String** from the Application Insights
+   resource's Overview page into the App Service's Application settings as
+   `APPLICATIONINSIGHTS_CONNECTION_STRING`.
+7. **GitHub Actions OIDC** — "Microsoft Entra ID" → **App registrations** → New registration, named
+   e.g. `abouna-qa-github-deploy`. On the new app: **Certificates & secrets** → **Federated
+   credentials** tab → Add credential → scenario **GitHub Actions deploying Azure resources** → fill
+   in your GitHub org/repo (`GITHUB_REPO`), entity type **Branch**, value `main` (Azure fills in the
+   correct issuer/subject/audience for you). Repeat once more with entity type **Environment**, value
+   `production`, since the workflow also gates on a GitHub Environment named that. Then go to the
+   **resource group's** (`RESOURCE_GROUP`) **Access control (IAM)** blade → Add role assignment →
+   role **Contributor** → assign to the app registration you just created (search by its name). Note
+   down, from the app registration's Overview page, the **Application (client) ID** and **Directory
+   (tenant) ID**, plus the subscription ID from the "Subscriptions" service — you'll need all three
+   next.
+8. **Verification** — the Postgres server's and App Service's Overview pages should both show a
+   healthy/running status. The rest of the checks (Key Vault references resolving, Application
+   Insights receiving traces, the email flows working end-to-end) are the same "After deploying to
+   Azure" list under Deploying below — no need to repeat them here.
+
+Set the same GitHub secrets table shown below the CLI steps — the Portal steps above produce the
+identical four values (`AZURE_CLIENT_ID` = the Application (client) ID, `AZURE_TENANT_ID` = the
+Directory (tenant) ID, `AZURE_SUBSCRIPTION_ID` = your subscription ID, `DATABASE_URL` = the same
+value you put in the `DATABASE-URL` Key Vault secret).
 
 ### 1. Resource group
 

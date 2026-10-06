@@ -18,6 +18,10 @@ export default async function PriestAccountPage() {
           <dt className="inline font-medium">Email: </dt>
           <dd className="inline">{priest.email}</dd>
         </div>
+        <div>
+          <dt className="inline font-medium">Church: </dt>
+          <dd className="inline">{priest.church}</dd>
+        </div>
         {priest.isAdmin && (
           <div>
             <dt className="inline font-medium">Role: </dt>
@@ -28,7 +32,7 @@ export default async function PriestAccountPage() {
       <form action={signOut}>
         <button
           type="submit"
-          className="rounded-md border border-black/20 dark:border-white/20 px-4 py-2 text-sm font-medium"
+          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-accent/10"
         >
           Sign Out
         </button>

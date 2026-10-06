@@ -30,10 +30,18 @@ model Priest {
   isAdmin   Boolean  @default(false)
   createdAt DateTime @default(now())
 
+  // Home parish. Required — also the exact-match key for the
+  // question-submitted-from-your-church notification.
+  country String
+  state   String
+  church  String
+
   invitesSent      PriestInvite[]  @relation("InvitedBy")
   answeredQuestions Question[]     @relation("AnsweredBy")
   magicLinkTokens  MagicLinkToken[]
   sessions         PriestSession[]
+
+  @@index([church])
 }
 
 model PriestInvite {
@@ -79,7 +87,21 @@ model Category {
   name      String     @unique
   slug      String     @unique
   createdAt DateTime   @default(now())
-  questions Question[]
+
+  questionCategories QuestionCategory[]
+}
+
+// Explicit join table (not Prisma's implicit m2m) so the raw-SQL full-text
+// search query in src/lib/questions.ts can join against a known table/column
+// name rather than depending on Prisma's internal implicit-m2m naming.
+model QuestionCategory {
+  questionId String
+  categoryId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, categoryId])
+  @@index([categoryId])
 }
 
 model Question {
@@ -89,8 +111,16 @@ model Question {
   askerEmail           String
   ageRange             AgeRange
 
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
+  // Asker's optional, partial location — country-only, country+state, or a
+  // specific church. Denormalized (no FK) since this is just static reference
+  // data (src/data/churches.json), not something needing referential
+  // integrity. Never shown/filterable publicly — internal use only (priest
+  // dashboard filtering, and the church-match notification on submission).
+  askerCountry String?
+  askerState   String?
+  askerChurch  String?
+
+  questionCategories QuestionCategory[]
 
   // Reserved for a future AI-suggested-category feature; unused in v1.
   aiSuggestedCategoryLabel String?
@@ -112,5 +142,5 @@ model Question {
   searchVector Unsupported("tsvector")?
 
   @@index([status, isPublic])
-  @@index([categoryId])
+  @@index([askerChurch])
 }

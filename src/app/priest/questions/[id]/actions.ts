@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { requirePriest } from "@/lib/session";
 import { prisma } from "@/lib/db";
-import { answerQuestionSchema, slugify } from "@/lib/validation";
+import { answerQuestionSchema } from "@/lib/validation";
 import { sendQuestionAnsweredEmail } from "@/lib/email";
 
 export type AnswerQuestionState = {
@@ -16,15 +16,11 @@ export async function answerQuestion(
 ): Promise<AnswerQuestionState> {
   const priest = await requirePriest();
 
-  const categoryId = formData.get("categoryId");
-  const newCategoryName = formData.get("newCategoryName");
-
   const parsed = answerQuestionSchema.safeParse({
     questionId: formData.get("questionId"),
     questionText: formData.get("questionText"),
     answerText: formData.get("answerText"),
-    categoryId: categoryId === "__new__" || !categoryId ? undefined : categoryId,
-    newCategoryName: categoryId === "__new__" ? newCategoryName || undefined : undefined,
+    categoryIds: formData.getAll("categoryIds"),
     isPublic: formData.get("isPublic") === "on",
   });
 
@@ -37,30 +33,25 @@ export async function answerQuestion(
     return { error: "Question not found." };
   }
 
-  let resolvedCategoryId = parsed.data.categoryId ?? existingQuestion.categoryId ?? undefined;
+  const categoryIds = [...parsed.data.categoryIds];
 
-  if (parsed.data.newCategoryName) {
-    const name = parsed.data.newCategoryName.trim();
-    const category = await prisma.category.upsert({
-      where: { name },
-      create: { name, slug: slugify(name) },
-      update: {},
-    });
-    resolvedCategoryId = category.id;
-  }
-
-  await prisma.question.update({
-    where: { id: parsed.data.questionId },
-    data: {
-      questionText: parsed.data.questionText,
-      answerText: parsed.data.answerText,
-      categoryId: resolvedCategoryId ?? null,
-      isPublic: parsed.data.isPublic,
-      status: "ANSWERED",
-      answeredByPriestId: priest.id,
-      answeredAt: new Date(),
-    },
-  });
+  await prisma.$transaction([
+    prisma.question.update({
+      where: { id: parsed.data.questionId },
+      data: {
+        questionText: parsed.data.questionText,
+        answerText: parsed.data.answerText,
+        isPublic: parsed.data.isPublic,
+        status: "ANSWERED",
+        answeredByPriestId: priest.id,
+        answeredAt: new Date(),
+      },
+    }),
+    prisma.questionCategory.deleteMany({ where: { questionId: parsed.data.questionId } }),
+    prisma.questionCategory.createMany({
+      data: categoryIds.map((categoryId) => ({ questionId: parsed.data.questionId, categoryId })),
+    }),
+  ]);
 
   await sendQuestionAnsweredEmail({
     to: existingQuestion.askerEmail,
