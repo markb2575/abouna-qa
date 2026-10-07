@@ -4,8 +4,11 @@ import { hashToken } from "@/lib/tokens";
 import { createPriestSession } from "@/lib/session";
 
 export async function GET(request: NextRequest) {
+  // Behind App Service, request.url is the container's internal host (e.g.
+  // http://337db67012f7:8080), so redirect relative to the public URL instead.
+  const origin = process.env.PUBLIC_BASE_URL ?? request.url;
   const token = request.nextUrl.searchParams.get("token");
-  const signInUrl = new URL("/priest/sign-in?error=invalid-link", request.url);
+  const signInUrl = new URL("/priest/sign-in?error=invalid-link", origin);
 
   if (!token) {
     return NextResponse.redirect(signInUrl);
@@ -30,5 +33,5 @@ export async function GET(request: NextRequest) {
 
   await createPriestSession(magicLinkToken.priestId);
 
-  return NextResponse.redirect(new URL("/priest/dashboard", request.url));
+  return NextResponse.redirect(new URL("/priest/dashboard", origin));
 }
